@@ -14,16 +14,25 @@ HA_TOKEN = getenv('HA_TOKEN')
 
 class HAShoppingList:
 
-    _ha_shopping_list_endpoint = 'api/shopping_list'
+    _ha_shopping_list_endpoint = 'api/services/shopping_list'
+    # api/shopping_list
+    # api/services/shopping_list/
 
     def __init__(self, ha_host, token):
         self._token = token
-        self.ha_post_url = join(ha_host, self._ha_shopping_list_endpoint, "item") if self._token else ha_host
+        self.ha_host = ha_host
         self._headers = {"Authorization": f"Bearer {self._token}"} if self._token else {}
 
     def add(self, item):
         item_dict = {'name': item}
-        response = requests.post(self.ha_post_url, headers=self._headers, json=item_dict)
+        ha_post_url = join(self.ha_host, self._ha_shopping_list_endpoint, "add_item") if self._token else ha_host
+        response = requests.post(ha_post_url, headers=self._headers, json=item_dict)
+        app.log.info(str(response.status_code))
+
+    def delete(self, item):
+        item_dict = {'name': item}
+        ha_post_url = join(self.ha_host, self._ha_shopping_list_endpoint, "complete_item") if self._token else ha_host
+        response = requests.post(ha_post_url, headers=self._headers, json=item_dict)
         app.log.info(str(response.status_code))
 
 
@@ -45,6 +54,10 @@ class ListEvent:
     @property
     def is_item_deleted(self):
         return self.type == "AlexaHouseholdListEvent.ListDeleted"
+
+    @property
+    def is_item_updated(self):
+        return self.type == "AlexaHouseholdListEvent.ItemsUpdated"
 
 
 class ListItem:
@@ -103,9 +116,14 @@ class AlexaList:
 @app.lambda_function()
 def lambda_handler(event, context):
     app.log.info(str(event))
+    create_item = 2
     list_event = ListEvent(event)
     app.log.info(f"Event type is {list_event.type}")
-    if not list_event.is_item_created:
+    if list_event.is_item_created:
+        create_item = 1
+    elif list_event.is_item_deleted or list_event.is_item_updated:
+        create_item = 0
+    else:
         app.log.info(f"Nothing to do")
         return
 
@@ -121,6 +139,10 @@ def lambda_handler(event, context):
     ha_list = HAShoppingList(HA_HOST, HA_TOKEN)
 
     for item in items:
-        app.log.info(f"Adding [{item['value']}] to HA")
-        ha_list.add(item['value'].title())
+        if create_item == 1:
+            app.log.info(f"Adding [{item['value']}] to HA")
+            ha_list.add(item['value'].title())
+        elif create_item == 0:
+            app.log.info(f"Update/Delete [{item['value']}] to HA")
+            ha_list.delete(item['value'].title())
 
